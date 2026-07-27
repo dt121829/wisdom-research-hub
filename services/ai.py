@@ -1,28 +1,36 @@
-"""Claude API integration.
+"""Shared context and system prompt for the conversational and report features.
 
-All AI features (dashboard outlook, chatbot, report generator) route through
-this module. When no API key is configured the app falls back to canned demo
-content so the interface remains fully navigable.
+Model access goes through services.llm, so this module is provider-agnostic.
 """
 
-import os
+from datetime import datetime
 
-import streamlit as st
+import streamlit as st  # noqa: F401  (kept for callers that expect st to be loaded)
 
-try:
-    import anthropic
-except ImportError:  # keeps the app importable even before deps are installed
-    anthropic = None
+from services import llm
 
-MODEL = "claude-opus-5"
+SOURCES = ["Barron's", "The Wall Street Journal", "CNBC", "Seeking Alpha", "Yahoo Finance"]
 
-# Context injected into every AI call: live quotes + live headlines when the
-# connectors are reachable, sample data otherwise. Buyside views are curated
-# samples pending the Bloomberg Terminal integration.
+SYSTEM_PROMPT = f"""You are the research assistant of Wisdom Family Office. You help
+investment staff synthesise market intelligence aggregated from five approved sources:
+{', '.join(SOURCES)}.
+
+Use ONLY the material in the context block below. It is the firm's approved source set.
+Never introduce facts, figures, or opinions from anywhere else, and do not fall back on
+your own prior knowledge of markets — if the context does not cover something, say what
+is missing instead of filling the gap.
+
+Attribute claims to their source (e.g. "per CNBC..."). Distinguish clearly between
+buyside voices (asset managers, hedge funds) and sell-side or media commentary. When
+sources disagree, say so explicitly — surfacing divergence is more valuable than a
+blended average. You provide research synthesis, not personalised investment advice.
+
+Formatting: output Markdown. Escape literal dollar signs as \\$ (the interface renders
+paired $ as LaTeX math)."""
+
+
 def build_context() -> str:
-    from datetime import datetime
-
-    from data import sample_data as d
+    """Assemble the live source material handed to the model on every call."""
     from services import live_data
 
     indices, sectors, quotes_live = live_data.get_market_data()
@@ -30,76 +38,41 @@ def build_context() -> str:
 
     lines = []
     if quotes_live:
-        lines.append(f"MARKET SNAPSHOT (live via Yahoo Finance, {datetime.now():%Y-%m-%d %H:%M}):")
+        lines.append(f"MARKET SNAPSHOT (Yahoo Finance, {datetime.now():%Y-%m-%d %H:%M}):")
     else:
-        lines.append(f"MARKET SNAPSHOT (sample data as of {d.AS_OF.isoformat()}):")
+        lines.append("MARKET SNAPSHOT (sample data — live quotes unavailable):")
     lines.append("; ".join(f"{i['name']} {i['value']} ({i['change']})" for i in indices))
-    lines.append("Sector 1-day moves: " + "; ".join(f"{s['name']} {s['change']:+.1f}%" for s in sectors))
+    lines.append("Sector 1-day moves: "
+                 + "; ".join(f"{s['name']} {s['change']:+.1f}%" for s in sectors))
     lines.append("")
-    lines.append("LATEST HEADLINES" + (" (live RSS from the sources)" if news_live else " (sample)") + ":")
+    lines.append("ARTICLE MATERIAL"
+                 + (" (live RSS from the approved sources):" if news_live else " (sample):"))
     for h in headlines:
-        lines.append(f"- [{h['source']}] {h['title']} — {h['summary']} (sentiment: {h['sentiment']})")
-    lines.append("")
-    lines.append("BUYSIDE VIEWS (asset managers / hedge funds — curated sample entries "
-                 "pending Bloomberg Terminal integration):")
-    for v in d.BUYSIDE_VIEWS:
-        lines.append(
-            f"- {v['firm']} ({v['firm_type']}, via {v['channel']}, {v['date']}) on {v['topic']}: "
-            f"{v['stance']} / conviction {v['conviction']}. {v['view']}"
-        )
-    lines.append("")
-    lines.append("CROSS-SOURCE CONSENSUS MAP:")
-    for c in d.CONSENSUS:
-        lines.append(f"- {c['theme']}: consensus = {c['consensus']} divergence = {c['divergence']}")
+        lines.append(f"- [{h['source']}] {h['title']} — {h['summary']} "
+                     f"(sentiment: {h['sentiment']})")
+
+    sa_items, sa_live = live_data.get_sa_analysis()
+    if sa_live:
+        lines.append("")
+        lines.append("SEEKING ALPHA — LATEST INDEPENDENT ANALYSIS:")
+        for item in sa_items:
+            author = f" by {item['author']}" if item["author"] else ""
+            lines.append(f"- {item['title']}{author}")
+
     return "\n".join(lines)
 
 
-SYSTEM_PROMPT = """You are the research assistant of Wisdom Family Office. You help investment
-staff synthesise market intelligence aggregated from five sources: Barron's, The Wall Street
-Journal, CNBC, Seeking Alpha, and the firm's Bloomberg Terminal.
-
-Ground every answer in the source material provided in the context block. Attribute claims to
-their source (e.g. "per the Bloomberg 13F roundup..."). Distinguish clearly between sell-side
-commentary and buyside views. When sources disagree, say so explicitly — surfacing divergence
-is more valuable than a blended average. If the context does not cover a question, say what is
-missing rather than inventing data. You provide research synthesis, not personalised investment
-advice.
-
-Formatting: output Markdown. Escape literal dollar signs as \\$ (the interface renders paired $
-as LaTeX math)."""
-
-
-def get_api_key() -> str | None:
-    if st.session_state.get("api_key"):
-        return st.session_state["api_key"]
-    try:
-        if "ANTHROPIC_API_KEY" in st.secrets:
-            return st.secrets["ANTHROPIC_API_KEY"]
-    except Exception:
-        pass
-    return os.environ.get("ANTHROPIC_API_KEY")
-
-
-def get_client():
-    key = get_api_key()
-    if key and anthropic is not None:
-        return anthropic.Anthropic(api_key=key)
-    return None
-
-
 def live_mode() -> bool:
-    return get_client() is not None
+    return llm.live()
 
 
-def stream_completion(messages: list[dict], system: str | None = None, max_tokens: int = 8000):
-    """Yield text chunks from Claude. Caller guarantees a client exists."""
-    client = get_client()
-    full_system = (system or SYSTEM_PROMPT) + "\n\n<context>\n" + build_context() + "\n</context>"
-    with client.messages.stream(
-        model=MODEL,
-        max_tokens=max_tokens,
-        system=full_system,
-        messages=messages,
-    ) as stream:
-        for text in stream.text_stream:
-            yield text
+def provider_label() -> str:
+    return llm.provider_label()
+
+
+def stream_completion(messages: list[dict], system: str | None = None,
+                      max_tokens: int = 8000):
+    """Stream a completion with the live source material attached."""
+    full_system = ((system or SYSTEM_PROMPT)
+                   + "\n\n<context>\n" + build_context() + "\n</context>")
+    return llm.stream(messages, full_system, max_tokens=max_tokens)

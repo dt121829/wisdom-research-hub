@@ -16,19 +16,18 @@ _CANNED = {
         "strength compressing margins, and tariff uncertainty."
     ),
     "fed": (
-        "**Fed path (sample data):** Bloomberg Intelligence economists moved their first-cut call "
-        "from September to December, citing core inflation sticky at 2.8%. Notably, buyside "
-        "letters had already migrated to December — the sell-side/buyside gap on cut timing has "
-        "now closed, which itself was a useful positioning signal while it lasted. Fixed-income "
-        "managers favour the 3–7y belly of the curve."
+        "**Fed path (sample data):** coverage on Yahoo Finance reports economists moving their "
+        "first-cut call from September to December, citing core inflation sticky at 2.8%. WSJ "
+        "notes the dollar softening as markets price higher odds of a Q4 pivot. The gap between "
+        "media consensus and what fund managers say on the record is exactly what the Buyside "
+        "Views page is built to surface."
     ),
     "buyside": (
-        "**Buyside positioning snapshot (sample data):** Q2 13F filings show hedge funds adding "
-        "semiconductors and defensives while trimming consumer cyclicals. Asset managers are "
-        "overweight the AI supply chain and Asia ex-Japan on a softer dollar. Hedge funds express "
-        "the AI theme through relative-value structures (long infrastructure vs. short concept "
-        "names) rather than outright longs, and quant desks flag momentum crowding at the 96th "
-        "percentile."
+        "**Buyside positioning (demo mode).** In live mode the Buyside Views page reads the "
+        "current articles from all five sources, extracts every view attributed to a named "
+        "asset manager or hedge fund, and cross-checks whether that same party is quoted "
+        "elsewhere — flagging cases where their stance differs between outlets. Connect "
+        "Copilot in the sidebar to run it against today's coverage."
     ),
     "disagree": (
         "**Where sources diverge (sample data):** (1) AI capex — media coverage is upbeat on the "

@@ -1,9 +1,13 @@
-"""Live data connectors.
+"""Live data connectors for the five approved sources.
+
+    Barron's · WSJ · CNBC · Seeking Alpha · Yahoo Finance
 
 - Market quotes: Yahoo Finance (yfinance) — indices, 10Y yield, VIX, sector ETFs.
-- Headlines: official RSS feeds from CNBC, WSJ (Dow Jones), and Seeking Alpha.
-- Barron's and Bloomberg Terminal have no free public feed; they remain
-  sample/manual connectors (see the Sources & Methodology page).
+- Headlines: official RSS from CNBC, WSJ (Dow Jones), Seeking Alpha, Yahoo Finance.
+- Barron's is hard-paywalled and returns 403 on every public endpoint; it stays a
+  subscription connector (see the Sources & Methodology page).
+
+No other sources are consulted anywhere in the app.
 
 Every function is cached and falls back to the bundled sample dataset on any
 network failure, so the UI keeps working offline.
@@ -52,9 +56,15 @@ NEWS_FEEDS = [
     ("WSJ", "Markets", "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", 5),
     ("WSJ", "Business", "https://feeds.content.dowjones.io/public/rss/WSJcomUSBusiness", 3),
     ("Seeking Alpha", "Market Currents", "https://seekingalpha.com/market_currents.xml", 5),
+    ("Yahoo Finance", "Markets", "https://finance.yahoo.com/news/rssindex", 5),
 ]
 
 SA_ANALYSIS_FEED = "https://seekingalpha.com/feed.xml"
+
+# Per-ticker news, used by the report generator to gather topic-specific coverage.
+YF_TICKER_FEED = ("https://feeds.finance.yahoo.com/rss/2.0/headline"
+                  "?s={symbol}&region=US&lang=en-US")
+SA_TICKER_FEED = "https://seekingalpha.com/api/sa/combined/{symbol}.xml"
 
 _POS_WORDS = ("beat", "beats", "surge", "rally", "rallies", "record", "gains", "jumps",
               "soars", "upgrade", "bullish", "tops", "climbs", "boost", "strong")
@@ -184,9 +194,59 @@ def get_headlines():
                 continue  # one dead feed shouldn't kill the rest
         if len(out) < 3:
             raise ValueError("feeds unavailable")
-        return out, True
+
+        # Round-robin across sources so no single feed dominates the top of the
+        # list — the dashboard and the AI both see a balanced mix.
+        by_source: dict[str, list] = {}
+        for item in out:
+            by_source.setdefault(item["source"], []).append(item)
+        interleaved = []
+        while any(by_source.values()):
+            for src in list(by_source):
+                if by_source[src]:
+                    interleaved.append(by_source[src].pop(0))
+        return interleaved, True
     except Exception:
         return d.HEADLINES, False
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_topic_news(topic: str, symbol: str = "", limit: int = 14):
+    """Topic-specific coverage for the report generator.
+
+    Pulls the per-ticker feeds when a symbol is supplied, then falls back to
+    keyword-matching the general headline pool. Only the approved sources are used.
+    """
+    import feedparser
+    import requests
+
+    items = []
+    if symbol:
+        for source, url in (("Yahoo Finance", YF_TICKER_FEED.format(symbol=symbol)),
+                            ("Seeking Alpha", SA_TICKER_FEED.format(symbol=symbol))):
+            try:
+                r = requests.get(url, headers=UA, timeout=8)
+                for e in feedparser.parse(r.content).entries[:limit]:
+                    title = _clean(e.get("title", ""), 160)
+                    if title:
+                        items.append({
+                            "source": source, "category": symbol.upper(), "title": title,
+                            "summary": _clean(e.get("summary", "")), "time": _fmt_time(e),
+                            "sentiment": _sentiment(title), "link": e.get("link", ""),
+                        })
+            except Exception:
+                continue
+
+    # Supplement with any general headlines mentioning the topic.
+    headlines, _ = get_headlines()
+    words = [w.lower() for w in topic.split() if len(w) > 3]
+    for h in headlines:
+        blob = (h["title"] + " " + h["summary"]).lower()
+        if any(w in blob for w in words) or symbol.lower() in blob:
+            if not any(h["title"] == i["title"] for i in items):
+                items.append(h)
+
+    return items[:limit]
 
 
 @st.cache_data(ttl=900, show_spinner=False)

@@ -3,6 +3,9 @@
 .env
 *.key
 
+# Generated reports (local archive, not source)
+data/reports/
+
 # Virtual environment
 .venv/
 venv/

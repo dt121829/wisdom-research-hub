@@ -41,8 +41,15 @@ PURPOSES = {
 }
 
 
-def build_report_messages(topic, report_type, audience, length, style, language, purpose):
+def build_report_messages(topic, report_type, audience, length, style, language, purpose,
+                          topic_articles=None):
     length_desc, max_tokens = LENGTHS[length]
+    topic_block = ""
+    if topic_articles:
+        lines = "\n".join(f"[{a['source']}] {a['title']} — {a.get('summary', '')}"
+                          for a in topic_articles)
+        topic_block = (f"\nTOPIC-SPECIFIC COVERAGE gathered from the approved sources:\n"
+                       f"{lines}\n")
     lang_line = (
         "Write the entire report in Traditional Chinese (繁體中文), using terminology standard "
         "in Taiwan's financial industry."
@@ -50,7 +57,7 @@ def build_report_messages(topic, report_type, audience, length, style, language,
         else "Write the report in English."
     )
     prompt = f"""Generate an investment research report with the following specification:
-
+{topic_block}
 TOPIC: {topic}
 REPORT TYPE: {report_type} — {REPORT_TYPES[report_type]}
 AUDIENCE: {audience} — {AUDIENCES[audience]}
@@ -60,7 +67,10 @@ LANGUAGE: {lang_line}
 PURPOSE: {purpose} — {PURPOSES[purpose]}
 
 Requirements:
-- Synthesise across the five sources in the context block; attribute views to sources.
+- Use ONLY the supplied source material (Barron's, WSJ, CNBC, Seeking Alpha, Yahoo Finance).
+  Do not add facts from your own knowledge. Where the material is thin on a point, say so
+  rather than filling the gap.
+- Synthesise across the sources; attribute views to sources.
 - Include a dedicated section contrasting the buyside view (asset managers, hedge funds)
   with sell-side / media commentary, and state where they diverge.
 - End with "Key things to monitor" and a one-line disclaimer that this is research synthesis,
@@ -73,7 +83,7 @@ Requirements:
 # --------------------------------------------------------------------------- demo fallbacks
 
 DEMO_REPORT_EN = """# Taiwan Semiconductor (TSM) — Investment Memo
-*Wisdom Family Office · Sample output (demo mode) · Sources: Barron's, WSJ, CNBC, Seeking Alpha, Bloomberg Terminal*
+*Wisdom Family Office · Sample output (demo mode) · Sources: Barron's, WSJ, CNBC, Seeking Alpha, Yahoo Finance*
 
 ## Executive summary
 TSMC remains the most consensus-long name across our monitored sources, and — unusually —
@@ -86,8 +96,8 @@ risk rather than demand.
   the same stage."
 - **Seeking Alpha (crowd + buyside colour):** 14 of 18 recent contributor notes rate TSM
   Buy/Strong Buy. Bears focus on NT\\$ appreciation compressing gross margin.
-- **Bloomberg Terminal (positioning):** Q2 13F filings show hedge funds adding semis;
-  one multi-strategy fund is long TSM against a basket of unprofitable AI names.
+- **Yahoo Finance (market data & flow):** the semis complex has led sector performance
+  over the past week, with TSM outpacing the broader index.
 - **WSJ / Barron's (macro frame):** AI capex guidance keeps rising (\\$420bn combined for
   2026), but strategists urge selectivity as valuation dispersion widens.
 
@@ -122,7 +132,7 @@ DEMO_REPORT_ZH = """# 台積電（TSM）— 投資備忘錄
 ## 各來源觀點
 - **CNBC（新聞面）：** 七月營收優於預期；管理層表示 2 奈米需求「較 3 奈米同期更強」。
 - **Seeking Alpha（買方與市場情緒）：** 近期 18 篇分析中有 14 篇給予買進或強力買進評等；空方聚焦新台幣升值壓縮毛利率。
-- **彭博終端機（部位資料）：** 第二季 13F 顯示避險基金加碼半導體；一檔多策略基金作多台積電、放空無獲利支撐的 AI 概念股。
+- **Yahoo Finance（市場數據與資金流）：** 近一週半導體類股領先大盤，台積電表現優於指數。
 - **華爾街日報 / Barron's（總經框架）：** 四大雲端業者 2026 年資本支出上看 4,200 億美元，惟策略師提醒估值分歧擴大、宜精選個股。
 
 ## 買方 vs. 賣方

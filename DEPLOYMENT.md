@@ -106,12 +106,15 @@ Confirm that **`secrets.toml` is NOT there** — only `secrets.toml.example` sho
    Paste in the following, with your own values:
 
    ```toml
-   ANTHROPIC_API_KEY = "sk-ant-your-real-key-here"
-   APP_PASSWORD = "a-strong-shared-password"
+   AZURE_OPENAI_ENDPOINT   = "https://your-resource.openai.azure.com/"
+   AZURE_OPENAI_API_KEY    = "your-azure-key"
+   AZURE_OPENAI_DEPLOYMENT = "gpt-4o"
+   APP_PASSWORD            = "a-strong-shared-password"
    ```
 
-   - `ANTHROPIC_API_KEY` turns on live Claude for everyone. Get one at
-     **https://platform.claude.com** → Settings → API keys.
+   - The three `AZURE_OPENAI_*` values turn on Copilot for everyone. Find them in the Azure
+     portal under your Azure OpenAI resource → **Keys and Endpoint**, plus the name you gave
+     your model deployment under **Model deployments**.
    - `APP_PASSWORD` is the password staff type to get in. **Set this before sharing the link** —
      without it, anyone who has the URL can open the app.
 7. Click **Deploy**. The first build takes 2–5 minutes while it installs the libraries.

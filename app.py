@@ -6,8 +6,10 @@ st.set_page_config(
     layout="wide",
 )
 
-from services import ai, auth  # noqa: E402
-from views import buyside, chatbot, dashboard, report_generator, sources_page  # noqa: E402
+from services import auth, llm  # noqa: E402
+from views import (  # noqa: E402
+    buyside, chatbot, dashboard, report_generator, reports_library, sources_page,
+)
 
 
 def _sidebar():
@@ -16,20 +18,27 @@ def _sidebar():
         st.caption("AI-driven investment research for Wisdom Family Office")
         st.divider()
 
-        st.text_input(
-            "Anthropic API key",
-            type="password",
-            key="api_key",
-            help="Paste a key here for this session, or put it in .streamlit/secrets.toml "
-                 "(see secrets.toml.example) so it loads automatically for everyone.",
-        )
-        if ai.live_mode():
-            st.success("Claude connected — outlook, chatbot and reports are live")
+        if llm.live():
+            st.success(f"🤖 {llm.provider_label()}")
         else:
-            st.info("AI in demo mode — add an API key to enable live Claude. "
-                    "Market data and headlines stream live regardless.")
+            st.info("🤖 Demo mode — no AI provider connected")
+
+        with st.expander("AI provider settings", expanded=not llm.live()):
+            st.caption(
+                "Copilot runs on **Azure OpenAI**. Enter the three values from your Azure "
+                "portal, or set them permanently in `.streamlit/secrets.toml`."
+            )
+            st.text_input("Azure endpoint", key="AZURE_OPENAI_ENDPOINT",
+                          placeholder="https://your-resource.openai.azure.com/")
+            st.text_input("Azure API key", key="AZURE_OPENAI_API_KEY", type="password")
+            st.text_input("Deployment name", key="AZURE_OPENAI_DEPLOYMENT",
+                          placeholder="gpt-4o")
+            st.caption("Alternatively, an Anthropic key uses Claude as a fallback provider.")
+            st.text_input("Anthropic API key (optional)", key="ANTHROPIC_API_KEY",
+                          type="password")
+
         st.divider()
-        st.caption("Sources: Barron's · WSJ · CNBC · Seeking Alpha · Bloomberg Terminal")
+        st.caption("Sources: Barron's · WSJ · CNBC · Seeking Alpha · Yahoo Finance")
 
 
 if not auth.check_password():
@@ -39,6 +48,7 @@ pages = [
     st.Page(dashboard.render, title="Dashboard", icon="📈", url_path="dashboard", default=True),
     st.Page(buyside.render, title="Buyside Views", icon="🏦", url_path="buyside"),
     st.Page(report_generator.render, title="AI Report Generator", icon="📝", url_path="reports"),
+    st.Page(reports_library.render, title="Reports Library", icon="📚", url_path="library"),
     st.Page(chatbot.render, title="Research Assistant", icon="💬", url_path="assistant"),
     st.Page(sources_page.render, title="Sources & Methodology", icon="🗂️", url_path="sources"),
 ]
