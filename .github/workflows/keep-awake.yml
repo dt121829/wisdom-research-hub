@@ -1,0 +1,40 @@
+# Keeps the deployed Streamlit app from going to sleep.
+#
+# Streamlit Community Cloud sleeps any app with no traffic for 12 hours, so an
+# internal tool used only on weekdays would be asleep every morning. This visits
+# the app with a real browser every 6 hours, which resets that timer.
+#
+# SETUP: add your app's address as a repository variable named APP_URL
+#   GitHub repo -> Settings -> Secrets and variables -> Actions -> Variables tab
+#   -> New repository variable -> Name: APP_URL  Value: https://your-app.streamlit.app
+#
+# You can also trigger it by hand any time from the Actions tab ("Run workflow").
+
+name: Keep app awake
+
+on:
+  schedule:
+    # Every 6 hours (UTC). Adjust if you only need it during business hours.
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  visit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright
+        run: |
+          pip install --quiet playwright
+          playwright install --with-deps chromium
+
+      - name: Visit the app
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: python .github/scripts/keep_awake.py

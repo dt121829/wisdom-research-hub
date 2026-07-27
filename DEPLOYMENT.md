@@ -144,6 +144,48 @@ git push
 
 ---
 
+## Part 6 · Keeping the app awake
+
+**Streamlit Community Cloud puts an app to sleep after 12 hours with no traffic.** For a tool
+used on weekdays that means it will usually be asleep first thing each morning, and after
+every weekend.
+
+### Waking it manually
+
+- **Anyone with the link** can wake it: the sleeping page shows a button reading
+  *"Yes, get this app back up!"*. Click it and wait 30–90 seconds. Viewers can do this
+  themselves — it doesn't have to be you.
+- **You, as owner:** open the app on share.streamlit.io and use **Manage app → Reboot**.
+
+### Waking it automatically (recommended)
+
+This repository includes `.github/workflows/keep-awake.yml`, which visits the app every
+6 hours using a real headless browser and clicks the wake button if it finds the app asleep.
+
+To switch it on, after you've deployed and have your app's address:
+
+1. Go to your GitHub repository → **Settings** → **Secrets and variables** → **Actions**
+2. Open the **Variables** tab → **New repository variable**
+3. Name: `APP_URL` — Value: your full address, e.g. `https://wisdom-research-hub.streamlit.app`
+4. Save. It runs on schedule from then on. To test immediately, go to the **Actions** tab,
+   pick **Keep app awake**, and click **Run workflow**.
+
+**Why a real browser?** Ordinary uptime pingers (UptimeRobot, cron-job.org) do *not* work
+here. Streamlit counts real browser sessions, not page fetches — the ping gets an HTTP 200
+back while the app stays fast asleep. That's why this uses Playwright rather than a simple
+scheduled URL request.
+
+Two things to know: GitHub disables scheduled workflows in a repository with no activity for
+60 days (any commit re-enables them), and on a private repository each run consumes a couple
+of minutes from your free monthly Actions allowance — roughly 120–240 minutes a month here,
+well inside the 2,000 included.
+
+### Avoiding the problem entirely
+
+Sleeping is a Community Cloud (free tier) behaviour. Hosting the app yourself on Azure App
+Service, Google Cloud Run, or Fly.io with a warm minimum instance removes it altogether, at
+the cost of a monthly hosting bill and a little more setup.
+
 ## Troubleshooting
 
 **"Author identity unknown"**
@@ -172,9 +214,8 @@ Yahoo Finance sometimes rate-limits shared cloud servers. The app deliberately f
 sample figures rather than showing stale numbers as if they were real. If this happens often
 in production, switch to a paid market-data provider in `services/live_data.py`.
 
-**The app is slow on first visit**
-Free Streamlit apps sleep after a period of inactivity and take ~30 seconds to wake up.
-Paid tiers stay awake.
+**The app went to sleep**
+See "Part 6 · Keeping the app awake" below.
 
 ---
 
