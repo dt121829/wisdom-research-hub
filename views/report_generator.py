@@ -2,7 +2,74 @@ from datetime import datetime
 
 import streamlit as st
 
-from services import ai, live_data, llm, pdf, report_store, reports
+from services import ai, documents, live_data, llm, pdf, report_store, reports
+
+
+def _reference_files():
+    """Optional user files folded into the report. Returns (docs, read_images)."""
+    with st.expander("📎 Attach reference files (optional)", expanded=False):
+        st.caption(
+            "Add your own material for the report to draw on — a broker note, a fund "
+            "letter, an earnings deck, a screenshot of a chart or table. PDF, Word, "
+            "text, Markdown, CSV and images are supported. Anything the report takes "
+            "from these is labelled as not from the selected sources. Files are "
+            "processed on this machine and sent only to your configured AI provider."
+        )
+        uploads = st.file_uploader(
+            "Reference files", type=documents.SUPPORTED, accept_multiple_files=True,
+            label_visibility="collapsed", key="report_refs",
+        )
+
+        docs, any_graphics = [], False
+        for upload in uploads or []:
+            data = upload.getvalue()
+            if documents.is_image(upload.name):
+                png, note = documents.normalise_image(data)
+                if not png:
+                    st.warning(f"`{upload.name}`: {note}")
+                    continue
+                docs.append({"name": upload.name, "text": "", "chars": 0,
+                             "data": data, "image": png})
+                any_graphics = True
+                continue
+            text, note = documents.extract_text(upload.name, data)
+            if note:
+                (st.warning if not text else st.info)(note)
+            graphics = documents.has_graphics(upload.name, data)
+            any_graphics = any_graphics or graphics
+            if text or graphics:
+                docs.append({"name": upload.name, "text": text, "chars": len(text),
+                             "data": data, "image": None, "graphics": graphics})
+
+        read_images = False
+        if any_graphics:
+            read_images = st.toggle(
+                "🔍 Look at the pictures (reads charts, tables and scans)", value=True,
+                help="Sends screenshots and PDF pages to the model as images so it can "
+                     "read figures that are drawn rather than written. Uses more quota.",
+                key="report_read_images",
+            )
+
+        if docs:
+            total = sum(d["chars"] for d in docs)
+            bits = [f"{len(docs)} file(s)"]
+            if total:
+                bits.append(f"{total:,} characters")
+            st.success("Reference material ready: " + " · ".join(bits) + ".")
+        return docs, read_images
+
+
+def _attachment_images(docs, read_images) -> list[bytes]:
+    """Every picture to send with the report request (screenshots + PDF pages)."""
+    if not read_images:
+        return []
+    pngs = []
+    for doc in docs:
+        if doc.get("image"):
+            pngs.append(doc["image"])
+        else:
+            pngs += documents.page_images(doc["name"], doc["data"])
+    return pngs[:8]
 
 
 def _build_charts_html(symbol: str, sector: str = "", length: str = "3 pages") -> str:
@@ -62,9 +129,11 @@ def render():
     st.title("AI Report Generator")
     st.caption(
         "Configure and generate a structured research report synthesised from the selected "
-        "sources — Seeking Alpha, Yahoo Finance, CNBC and SumZero. The result is rendered "
-        "as a professional research PDF."
+        "sources — Seeking Alpha, Yahoo Finance, CNBC and SumZero. You can also attach your "
+        "own reference files. The result is rendered as a professional research PDF."
     )
+
+    ref_docs, read_images = _reference_files()
 
     with st.form("report_form"):
         c0a, c0b = st.columns([3, 1])
@@ -125,10 +194,24 @@ def render():
                     st.caption(f"No fundamentals available for `{sym}` — the report will "
                                "skip the valuation section.")
 
+            # Fold in any reference files the user attached.
+            attachments_block = ""
+            text_docs = [d for d in ref_docs if d.get("text")]
+            if text_docs:
+                attachments_block = documents.as_context_block(text_docs)
+            ref_images = _attachment_images(ref_docs, read_images)
+            if ref_docs:
+                names = ", ".join(d["name"] for d in ref_docs)
+                extra = f" · {len(ref_images)} image(s)" if ref_images else ""
+                st.caption(f"Including reference files: {names}{extra}.")
+
             messages, max_tokens = reports.build_report_messages(
                 topic, report_type, audience, length, style, language, purpose,
                 topic_articles=topic_articles, valuation_block=valuation_block,
+                attachments_block=attachments_block,
             )
+            if ref_images:
+                messages[-1] = llm.attach_images(messages[-1], ref_images)
             try:
                 with st.spinner("Writing the report…"):
                     text = "".join(ai.stream_completion(

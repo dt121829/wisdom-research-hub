@@ -211,7 +211,7 @@ its growth and margins.
 
 
 def build_report_messages(topic, report_type, audience, length, style, language, purpose,
-                          topic_articles=None, valuation_block=""):
+                          topic_articles=None, valuation_block="", attachments_block=""):
     length_desc, max_tokens, cap_plain, cap_valuation = LENGTHS[length]
     word_cap = cap_valuation if valuation_block else cap_plain
     # Per-section budgets scale with the page count; models hold to these far more
@@ -232,8 +232,17 @@ def build_report_messages(topic, report_type, audience, length, style, language,
         else "Write the report in English."
     )
     valuation_section = VALUATION_INSTRUCTIONS if valuation_block else ""
+    attachment_rules = ""
+    if attachments_block:
+        attachment_rules = (
+            "\nUSER-SUPPLIED REFERENCE FILES are included below. They are material the "
+            "user attached, NOT one of the firm's selected sources. When you draw on "
+            "them, name the file the point came from and end that point with the exact "
+            "label: ⚠️ *external — not from selected sources* . Where a reference file "
+            "and the selected sources disagree, say so plainly.\n"
+            + attachments_block + "\n")
     prompt = f"""Generate an investment research report with the following specification:
-{topic_block}{valuation_block}
+{topic_block}{valuation_block}{attachment_rules}
 TOPIC: {topic}
 REPORT TYPE: {report_type} — {REPORT_TYPES[report_type]}
 AUDIENCE: {audience} — {AUDIENCES[audience]}
