@@ -54,9 +54,89 @@ def _cfg(name: str) -> str | None:
     return val.strip() if val else None
 
 
+AZURE_KEYS = ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_DEPLOYMENT")
+
+# Placeholder text that means "not filled in yet" rather than a real value.
+_PLACEHOLDERS = ("PASTE_", "your-resource", "your-azure-key", "your-key-1-value",
+                 "your-key", "<", "xxx")
+
+
+def _source_of(name: str) -> str:
+    """Where a setting came from — used by the on-screen diagnostic."""
+    if st.session_state.get(name):
+        return "sidebar (this session only)"
+    try:
+        if name in st.secrets:
+            return "secrets"
+    except Exception:
+        pass
+    if os.environ.get(name):
+        return "environment variable"
+    return ""
+
+
+def diagnose() -> list[dict]:
+    """Per-setting status for the Azure connection, safe to show on screen."""
+    out = []
+    for key in AZURE_KEYS:
+        value = _cfg(key)
+        source = _source_of(key)
+        if not value:
+            state, detail = "missing", "not set anywhere"
+        elif any(p.lower() in value.lower() for p in _PLACEHOLDERS):
+            state, detail = "placeholder", "still holds example text"
+        elif key == "AZURE_OPENAI_API_KEY":
+            state, detail = "ok", f"{value[:6]}…{value[-4:]} ({len(value)} chars)"
+        elif key == "AZURE_OPENAI_ENDPOINT":
+            detail = value
+            if not value.startswith("https://"):
+                state = "suspect"
+                detail += "  ← should start with https://"
+            elif "/openai/" in value or value.rstrip("/").endswith("completions"):
+                state = "suspect"
+                detail += "  ← use the base URL only, no path"
+            else:
+                state = "ok"
+        else:
+            state, detail = "ok", value
+        out.append({"key": key, "state": state, "detail": detail, "source": source})
+    return out
+
+
+def test_connection() -> tuple[bool, str]:
+    """Make one tiny call and translate the result into plain English."""
+    if not azure_configured():
+        return False, "Azure settings are incomplete — see the checklist above."
+    try:
+        client = _azure_client()
+        response = _azure_create(
+            client, [{"role": "user", "content": "Reply with: ok"}], 20,
+            reasoning_effort="low")
+        reply = (response.choices[0].message.content or "").strip()
+        return True, f"Connected. The model replied: {reply or '(empty)'}"
+    except Exception as exc:
+        text, low = str(exc), str(exc).lower()
+        if "401" in text or "access denied" in low or "invalid api key" in low:
+            hint = ("The API key is wrong. Copy it again from the Azure portal → your "
+                    "resource → Keys and Endpoint → KEY 1.")
+        elif "404" in text or "deploymentnotfound" in low.replace(" ", ""):
+            hint = ("The endpoint and key work, but this resource has no deployment "
+                    f"called {_cfg('AZURE_OPENAI_DEPLOYMENT')!r}. Take the endpoint, key "
+                    "and deployment name from the same deployment page.")
+        elif "connection" in low or "getaddrinfo" in low or "timed out" in low:
+            hint = ("Could not reach the endpoint. Check the URL, and check the Azure "
+                    "resource's Networking tab allows access from all networks — a "
+                    "firewall there blocks Streamlit Cloud.")
+        elif "429" in text or "quota" in low:
+            hint = ("Rate limited or out of quota. Raise the tokens-per-minute limit on "
+                    "the deployment, or wait and retry.")
+        else:
+            hint = "Re-check all three values against the Azure portal."
+        return False, f"{type(exc).__name__}: {text[:200]}\n\n{hint}"
+
+
 def azure_configured() -> bool:
-    return all(_cfg(k) for k in
-               ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_DEPLOYMENT"))
+    return all(_cfg(k) for k in AZURE_KEYS)
 
 
 def anthropic_configured() -> bool:

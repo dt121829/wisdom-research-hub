@@ -27,9 +27,33 @@ def _sidebar():
         if llm.live():
             st.success(f"🤖 {llm.provider_label()}")
         else:
-            st.info("🤖 Demo mode — no AI provider connected")
+            st.error("🤖 Demo mode — no AI provider connected")
 
-        with st.expander("AI provider settings", expanded=not llm.live()):
+        with st.expander("🔧 Connection check", expanded=not llm.live()):
+            st.caption("What the app can actually see right now. On a deployed app "
+                       "these come from **Settings → Secrets**, not from your PC.")
+            icons = {"ok": "✅", "missing": "❌", "placeholder": "⚠️", "suspect": "⚠️"}
+            for row in llm.diagnose():
+                where = f" · from {row['source']}" if row["source"] else ""
+                st.markdown(f"{icons.get(row['state'], '•')} **{row['key']}**  \n"
+                            f"<small>{row['detail']}{where}</small>",
+                            unsafe_allow_html=True)
+
+            if st.button("Test connection", width="stretch"):
+                with st.spinner("Calling the deployment…"):
+                    ok, message = llm.test_connection()
+                (st.success if ok else st.error)(message)
+
+            if not llm.live():
+                st.caption(
+                    "**Deployed and seeing this?** The three values must be pasted into "
+                    "your app on share.streamlit.io → **Settings → Secrets** — the local "
+                    "`secrets.toml` is git-ignored and never reaches the server. Also "
+                    "check the Azure resource's **Networking** tab allows all networks, "
+                    "or Streamlit Cloud cannot reach it."
+                )
+
+        with st.expander("AI provider settings", expanded=False):
             st.caption(
                 "Copilot runs on **Azure OpenAI**. Enter the three values from your Azure "
                 "portal, or set them permanently in `.streamlit/secrets.toml`."
