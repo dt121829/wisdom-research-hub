@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import streamlit as st
 
 st.set_page_config(
@@ -12,12 +14,16 @@ from views import (  # noqa: E402
 )
 
 
-def _sidebar():
-    with st.sidebar:
-        st.markdown("### 📊 Wisdom Research Hub")
-        st.caption("AI-driven investment research for Wisdom Family Office")
-        st.divider()
+LOGO = Path(__file__).parent / "data" / "logo.svg"
 
+
+def _sidebar():
+    # st.logo pins the wordmark to the very top of the sidebar, above the page
+    # nav, and takes far less room than a heading plus caption plus divider.
+    if LOGO.exists():
+        st.logo(str(LOGO), size="large")
+
+    with st.sidebar:
         if llm.live():
             st.success(f"🤖 {llm.provider_label()}")
         else:
@@ -38,7 +44,8 @@ def _sidebar():
                           type="password")
 
         st.divider()
-        st.caption("Sources: Barron's · WSJ · CNBC · Seeking Alpha · Yahoo Finance")
+        st.caption("Selected sources: Seeking Alpha · Yahoo Finance · Yahoo 奇摩股市 · "
+                   "CNBC · SumZero · WhaleWisdom")
 
 
 if not auth.check_password():

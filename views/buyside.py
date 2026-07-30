@@ -6,51 +6,68 @@ STANCE_BADGE = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "⚪"}
 
 
 def _gather_articles():
-    """Everything the extractor is allowed to read, from the approved sources only."""
+    """Everything the reader is allowed to open, from the selected sources only."""
     headlines, _ = live_data.get_headlines()
-    sa_items, sa_live = live_data.get_sa_analysis(count=10)
+    sa_items, sa_live = live_data.get_sa_analysis(count=12)
     articles = list(headlines)
     if sa_live:
+        known = {a.get("link") for a in articles}
         articles += [
             {"source": "Seeking Alpha", "category": "Analysis", "title": i["title"],
              "summary": f"Independent analysis{(' by ' + i['author']) if i['author'] else ''}.",
              "time": i["time"], "sentiment": "Neutral", "link": i["link"]}
-            for i in sa_items
+            for i in sa_items if i["link"] not in known
         ]
     return articles
 
 
-def _render_view(v):
+def _market_note():
+    """Price context the comparison stage uses to test the claims against the tape."""
+    indices, sectors, _live = live_data.get_market_data()
+    top = sorted(sectors, key=lambda s: -s["change"])[:4]
+    bottom = sorted(sectors, key=lambda s: s["change"])[:4]
+    return (
+        "Indices today: "
+        + "; ".join(f"{i['name']} {i['value']} ({i['change']})" for i in indices)
+        + ". Best sectors today: "
+        + ", ".join(f"{s['name']} {s['change']:+.1f}%" for s in top)
+        + ". Worst sectors today: "
+        + ", ".join(f"{s['name']} {s['change']:+.1f}%" for s in bottom)
+    )
+
+
+def _render_quote(n, q):
     with st.container(border=True):
         head = st.columns([3, 2])
-        badge = "🏦" if v["is_buyside"] else "🏛"
-        head[0].markdown(f"{badge} **{v['party']}**  \n<small>{v['party_type']}</small>",
-                         unsafe_allow_html=True)
-        head[1].markdown(
-            f"{STANCE_BADGE[v['stance']]} **{v['stance']}** on {v['topic']}",
-        )
+        badge = "🏦" if q["is_buyside"] else "🏛"
+        who = f"**{q['person']}**"
+        if q.get("role"):
+            who += f"  \n<small>{q['role']}, {q['firm']}</small>"
+        elif q.get("firm"):
+            who += f"  \n<small>{q['firm']}</small>"
+        head[0].markdown(f"{badge} {who}", unsafe_allow_html=True)
+        head[1].markdown(f"{STANCE_BADGE[q['stance']]} **{q['stance']}** on {q['topic']}")
 
-        st.write(v["view"])
+        st.markdown(f"> {q['quote']}")
 
-        if v["also_in"]:
-            others = ", ".join(v["also_in"])
-            if v["stance_conflict"]:
-                st.warning(f"⚡ Cross-source check: also quoted in **{others}** — "
-                           "and the stance attributed there differs. Worth reading both.")
-            else:
-                st.success(f"🔗 Cross-source check: the same party is also quoted in "
-                           f"**{others}**, consistently.")
-
-        src = f"{v['source']} · {v['headline']}"
-        st.caption(f"[{src}]({v['link']})" if v.get("link") else src)
+        src = f"[{n}] {q['source']} · {q['headline']}"
+        st.caption(f"[{src}]({q['link']})" if q.get("link") else src)
 
 
 def render():
     st.title("Buyside Views")
     st.caption(
-        "Attributed market views extracted by AI from live coverage across Barron's, WSJ, "
-        "CNBC, Seeking Alpha and Yahoo Finance — then cross-checked to see whether the same "
-        "party is saying the same thing elsewhere."
+        "Reads the full text of live articles across the selected sources, pulls out what "
+        "named investors actually said, searches the rest of the coverage for more voices "
+        "on the same topics, and compares them against the day's market data. Every quote "
+        "is verbatim and links to the article it came from."
+    )
+    st.caption(
+        "🏦 **Buyside** here means asset management firms, hedge funds, and contributors "
+        "on the firm's research platforms (Seeking Alpha, SumZero, WhaleWisdom). "
+        "Bank and broker analysts, retail trading platforms such as eToro, and media "
+        "commentators such as network hosts are captured too, but are labelled as "
+        "🏛 non-buyside and filtered out by the **Buyside only** toggle."
     )
 
     if not llm.live():
@@ -67,70 +84,101 @@ def render():
         return
 
     col_a, col_b = st.columns([4, 1])
-    col_a.caption(f"Reading {len(articles)} articles · {llm.provider_label()}")
-    if col_b.button("↻ Re-extract", help="Clear the cache and analyse the latest articles"):
-        insights.buyside_views.clear()
+    col_a.caption(f"{len(articles)} articles available · {llm.provider_label()}")
+    if col_b.button("↻ Re-read", help="Re-pull the feeds and read the latest articles again"):
+        insights.buyside_pipeline.clear()
         live_data.get_headlines.clear()
         live_data.get_sa_analysis.clear()
+        live_data.fetch_article_text.clear()
         st.rerun()
 
+    s_col, d_col = st.columns([2, 3])
+    topic = s_col.text_input(
+        "Search a topic, company or investor",
+        placeholder="e.g. TSMC, memory prices, Fed policy",
+        help="Pulls additional coverage on this subject from the selected sources, "
+             "reads it, and frames the comparison around it.",
+    ).strip()
+    depth = d_col.select_slider(
+        "How much coverage to read",
+        options=["Quick (14 articles)", "Standard (24)", "Deep (40)"],
+        value="Standard (24)",
+        help="Each article is opened and read in full, so deeper takes longer.",
+    )
+    scan, follow = {"Quick (14 articles)": (10, 4),
+                    "Standard (24)": (14, 10),
+                    "Deep (40)": (24, 16)}[depth]
+
+    if topic:
+        st.caption(f"🔎 Searching the selected sources for coverage of **{topic}** and "
+                   "reading what it finds.")
+
     try:
-        with st.spinner("Reading the coverage and extracting attributed views…"):
-            views = insights.buyside_views(insights._key(articles, "buyside"), articles)
+        spinner = (f"Searching for “{topic}” and reading up to {scan + follow} articles…"
+                   if topic else
+                   f"Reading up to {scan + follow} articles in full and comparing views…")
+        with st.spinner(spinner):
+            result = insights.buyside_pipeline(
+                insights._key(articles, "pipeline", depth, topic), articles,
+                _market_note(), scan_count=scan, follow_count=follow, topic=topic,
+            )
     except Exception as exc:
         st.error(f"Extraction failed: {exc}")
         return
 
-    if not views:
-        st.info("No attributed views found in the current batch of articles. "
-                "Coverage today may be purely factual reporting — try again after the next refresh.")
+    quotes = result["quotes"]
+    if not quotes:
+        if topic:
+            st.info(f"No investor comments on **{topic}** in the coverage available. "
+                    "Try a broader term, a ticker, or 'Deep' to read more articles.")
+        else:
+            st.info("No investor comments found in the articles read this time. Today's "
+                    "coverage may be purely factual — try 'Deep' or hit ↻ Re-read.")
         return
 
-    # ------------------------------------------------------------- filters
-    f1, f2, f3 = st.columns(3)
-    only_buyside = f1.toggle("Buyside only", value=True,
-                             help="Asset managers and hedge funds only, excluding banks, "
-                                  "analysts, executives and policymakers")
+    st.caption(f"Read {result['scanned']} articles, then followed up on "
+               f"{result['followed']} more · found {len(quotes)} attributed comments")
+
+    # ------------------------------------------------------- the comparison
+    if result["comparison"]:
+        st.subheader("How the views compare")
+        st.markdown(result["comparison"])
+        st.caption("Numbers in brackets link to the article each quote came from. "
+                   "Market data: Yahoo Finance.")
+        st.divider()
+
+    # ------------------------------------------------------------ the quotes
+    st.subheader("What each investor said")
+
+    f1, f2 = st.columns(2)
+    only_buyside = f1.toggle(
+        "Buyside only", value=False,
+        help="Asset managers, hedge funds and research-platform contributors "
+             "(Seeking Alpha, SumZero, WhaleWisdom) only — excluding banks and "
+             "brokers, media commentators, executives and policymakers.")
     stance = f2.selectbox("Stance", ["All", "Bullish", "Bearish", "Neutral"])
-    cross_only = f3.toggle("Multi-source only", value=False,
-                           help="Show only parties quoted in more than one source")
 
-    shown = [
-        v for v in views
-        if (not only_buyside or v["is_buyside"])
-        and (stance == "All" or v["stance"] == stance)
-        and (not cross_only or v["also_in"])
-    ]
+    shown = [(n, q) for n, q in enumerate(quotes, 1)
+             if (not only_buyside or q["is_buyside"])
+             and (stance == "All" or q["stance"] == stance)]
 
-    multi = sum(1 for v in views if v["also_in"])
-    st.write(f"**{len(shown)}** of {len(views)} extracted views · "
-             f"{multi} appear in more than one source")
+    buyside_n = sum(1 for q in quotes if q["is_buyside"])
+    st.write(f"**{len(shown)}** of {len(quotes)} comments · {buyside_n} from buyside "
+             "institutions")
 
-    if not shown:
-        st.caption("Nothing matches these filters. Try turning off 'Buyside only' — "
-                   "today's coverage may be dominated by banks and analysts.")
+    for n, q in shown:
+        _render_quote(n, q)
 
-    for v in shown:
-        _render_view(v)
-
+    # ----------------------------------------------------- cited sources
     st.divider()
-
-    # ------------------------------------------------ consensus / divergence
-    st.subheader("Where the sources agree and disagree")
-    bulls = [v for v in views if v["stance"] == "Bullish"]
-    bears = [v for v in views if v["stance"] == "Bearish"]
-    conflicts = [v for v in views if v["stance_conflict"]]
-
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Bullish views", len(bulls))
-    m2.metric("Bearish views", len(bears))
-    m3.metric("Parties with conflicting quotes", len({v["party"] for v in conflicts}))
-
-    if conflicts:
-        st.markdown("**⚡ Parties quoted differently in different sources**")
-        for party in sorted({v["party"] for v in conflicts}):
-            entries = [v for v in views if v["party"] == party]
-            detail = " · ".join(f"{e['source']}: {e['stance']}" for e in entries)
-            st.markdown(f"- **{party}** — {detail}")
-    else:
-        st.caption("No contradictions detected between sources in the current batch.")
+    st.subheader("Cited sources")
+    seen = set()
+    for n, q in enumerate(quotes, 1):
+        key = (q["source"], q["headline"])
+        if key in seen:
+            continue
+        seen.add(key)
+        line = f"**{q['source']}** · {q['headline']}"
+        st.markdown(f"- [{line}]({q['link']})" if q.get("link") else f"- {line}")
+    st.caption("Every quote above is verbatim from one of these articles. Nothing on this "
+               "page is recalled from the model's own memory.")

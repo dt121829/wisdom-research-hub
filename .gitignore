@@ -6,6 +6,13 @@
 # Generated reports (local archive, not source)
 data/reports/
 
+# Windows system fonts copied here for local CJK PDF rendering. These are
+# licensed for use on Windows and must NOT be redistributed via this repo —
+# the deployed app installs fonts-noto-cjk instead (see packages.txt).
+data/fonts/kaiu.ttf
+data/fonts/msjh.ttf
+data/fonts/mingliu.ttf
+
 # Virtual environment
 .venv/
 venv/

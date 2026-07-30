@@ -13,9 +13,58 @@ Your PC  ──push──>  GitHub  ──reads──>  Streamlit Cloud  ──>
 reads code from GitHub and runs it as a live website. You need GitHub because Streamlit Cloud
 can only deploy from there.
 
-Everything on your PC is already prepared: the repository is initialised, all 18 source files
+Everything on your PC is already prepared: the repository is initialised, the source files
 are staged, and `.gitignore` is protecting your API key and virtual environment from being
 uploaded.
+
+---
+
+## Part 0 · Pre-flight check (2 min)
+
+Run these from the project folder before you push. They catch the things that actually
+break a first deploy.
+
+**1 · Confirm your secrets are not about to be uploaded.**
+
+```
+git status --short
+```
+
+`.streamlit/secrets.toml` must NOT appear. Only `secrets.toml.example` should ever be
+listed. If the real one shows up, stop and check `.gitignore`.
+
+**2 · Confirm the deploy files exist.** Streamlit Cloud reads three files from the repo
+root, all of which are already here:
+
+| File | What it does |
+|---|---|
+| `requirements.txt` | Python packages to install |
+| `packages.txt` | System packages — installs `fonts-noto-cjk` so Traditional Chinese PDFs render |
+| `.streamlit/config.toml` | Theme and server settings |
+
+**3 · Stage everything, including the newer modules.**
+
+```
+git add -A
+git status --short
+```
+
+You should see `services/pdf.py`, `services/documents.py`, `services/chartspec.py`,
+`packages.txt` and `data/logo.svg` among the files to be added.
+
+### A note on fonts
+
+Traditional Chinese PDFs need a CJK font. Locally the app uses one from
+`C:\Windows\Fonts`, but **those fonts are licensed for use on Windows and must not be
+published in a GitHub repository** — `.gitignore` therefore excludes
+`data/fonts/kaiu.ttf` and friends. The deployed app installs the open-licensed
+**Noto CJK** family instead, via `packages.txt`, and `services/pdf.py` searches for it
+automatically. You do not need to do anything; just don't force-add the Windows fonts.
+
+If you would rather bundle a font than rely on `packages.txt`, download
+**Noto Sans TC** (SIL Open Font License, free to redistribute) from
+<https://fonts.google.com/noto/specimen/Noto+Sans+TC>, drop the `.ttf` into
+`data/fonts/`, and commit it — the app picks up anything in that folder first.
 
 ---
 
@@ -147,6 +196,102 @@ git push
 
 ---
 
+## Part 5b · Connecting Copilot (Azure OpenAI)
+
+### Step 1 — create the Azure OpenAI resource
+
+1. Sign in at **https://portal.azure.com**
+2. **Create a resource** → search **Azure OpenAI** → **Create**
+3. On the **Basics** tab:
+   - **Subscription:** yours
+   - **Resource group:** *Create new* → `wisdom-research`
+   - **Region:** pick one near you that carries the model you want (East US and Sweden
+     Central have the widest selection)
+   - **Name:** e.g. `wisdom-openai` — this becomes part of your endpoint URL
+   - **Pricing tier:** Standard S0
+4. On the **Network** tab leave **All networks** selected. If you restrict networks here,
+   Streamlit Cloud won't be able to reach it.
+5. **Review + submit** → **Create**, then **Go to resource** when it finishes.
+
+There is no longer a waitlist or access application for Azure OpenAI.
+
+### Step 2 — deploy a model
+
+A resource is just an empty container. Nothing works until a model is deployed into it.
+
+**First check which portal you're in.** At <https://ai.azure.com> there is a **New Foundry**
+toggle, and the menus differ completely between the two. Check the toggle before hunting for
+menu items:
+
+| | New Foundry (toggle ON) | Foundry classic (toggle OFF) |
+|---|---|---|
+| Deploy a model | **Discover** (top-right) → **Models** → pick model → **Deploy** | **Deployments** → **+ Deploy model** |
+| See what you've deployed | **Build** (top-right) → **Models** | **Deployments** or **Models + endpoints** |
+
+> There is no menu item called "Deployments" in the new portal. Your existing deployments
+> live under **Build → Models**. Note that **Discover → Models** is a different list — that's
+> the *catalogue* of models available to deploy, not what you actually have running.
+
+To deploy in the new portal: **Discover** → **Models** → choose your model (e.g. `gpt-4o` or
+`gpt-5-mini`) → **Deploy** → **Default settings** is fine. Azure suggests a deployment name
+such as `gpt-5-mini-1`; you can accept or change it. Wait until the status reads *Succeeded*.
+
+### Step 3 — copy the three values (all from the same place)
+
+**Take all three from the deployment itself**, not from a resource you created separately:
+
+**Build** → **Models** → click your deployment. Its detail page shows the **endpoint** and
+**key** for the resource that deployment actually lives in.
+
+- Endpoint → `AZURE_OPENAI_ENDPOINT` (base URL only, no path)
+- Key → `AZURE_OPENAI_API_KEY`
+- The deployment's **Name** → `AZURE_OPENAI_DEPLOYMENT`
+
+> **The mistake that costs the most time:** pairing an endpoint from one resource with a
+> deployment name from another. The new Foundry portal often creates its *own* resource and
+> project, so a separate Azure OpenAI resource you made earlier in the Azure portal may sit
+> empty while your model runs somewhere else entirely. The symptom is a
+> `DeploymentNotFound` error even though your key is valid. Reading the endpoint, key and
+> name off the one deployment page avoids this completely.
+
+The endpoint may look like `https://<name>.services.ai.azure.com/` rather than
+`https://<name>.openai.azure.com/`. Both are fine — the app handles either.
+
+### Step 4 — put them in the app
+
+Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in:
+
+```toml
+AZURE_OPENAI_ENDPOINT   = "https://wisdom-openai.openai.azure.com/"
+AZURE_OPENAI_API_KEY    = "your-key-1-value"
+AZURE_OPENAI_DEPLOYMENT = "gpt-4o"
+```
+
+`secrets.toml` is git-ignored, so it never reaches GitHub.
+
+### Step 5 — verify before launching the app
+
+```
+.venv\Scripts\python.exe check_azure.py
+```
+
+This makes one tiny API call and tells you in plain English what's wrong if anything is:
+a wrong key, a wrong deployment name, or an unreachable endpoint each produce a different
+message. A pass looks like `SUCCESS — the model replied: 'connection ok'`.
+
+### Step 6 — the deployed site
+
+For the live site, don't upload `secrets.toml`. Paste the same three lines into
+share.streamlit.io → your app → **Settings** → **Secrets**, alongside `APP_PASSWORD`. The
+app restarts automatically.
+
+### Cost
+
+Everyone using the app shares this Azure billing. AI results are cached against the current
+article set, so a new call happens only when the news actually changes, not on every page
+refresh. Set a budget alert under **Cost Management + Billing** in the Azure portal if you
+want a hard ceiling.
+
 ## Part 6 · Keeping the app awake
 
 **Streamlit Community Cloud puts an app to sleep after 12 hours with no traffic.** For a tool
@@ -217,6 +362,23 @@ Yahoo Finance sometimes rate-limits shared cloud servers. The app deliberately f
 sample figures rather than showing stale numbers as if they were real. If this happens often
 in production, switch to a paid market-data provider in `services/live_data.py`.
 
+**Chinese characters show as boxes in a downloaded PDF**
+The CJK font did not install. Check that `packages.txt` exists in the repository root and
+contains `fonts-noto-cjk`, then reboot the app from **Manage app → Reboot** so the system
+packages are reinstalled. English reports are unaffected.
+
+**The Reports Library is empty after a restart**
+Expected on Community Cloud: generated reports are written to `data/reports/` on the
+server's disk, and that disk is wiped whenever the app restarts or goes to sleep. Download
+anything you need to keep as PDF or Word at the time you generate it. Durable storage means
+either hosting the app yourself (Part 6, "Avoiding the problem entirely") or writing reports
+to external storage such as Azure Blob or S3 from `services/report_store.py`.
+
+**"Error installing requirements" during the build**
+Open **Manage app** and read the log. This is usually a package that has no Linux wheel for
+the Python version Streamlit picked. You can pin the interpreter by adding a `.python-version`
+file containing e.g. `3.12` to the repository root.
+
 **The app went to sleep**
 See "Part 6 · Keeping the app awake" below.
 
@@ -226,7 +388,13 @@ See "Part 6 · Keeping the app awake" below.
 
 - Never put your API key directly in a code file — only in Streamlit's Secrets box, or in a
   local `.streamlit/secrets.toml` (which `.gitignore` already excludes from uploads).
-- If you ever accidentally publish a key, revoke it immediately at platform.claude.com and
-  generate a new one.
-- Everyone using the app shares the firm's Anthropic billing. Monitor spend in the Anthropic
-  console, and set a monthly limit there if you want a hard ceiling.
+- If you ever accidentally publish an Azure key, **rotate it immediately**: Azure portal →
+  your Azure OpenAI resource → **Keys and Endpoint** → **Regenerate Key 1**, then paste the
+  new value into Streamlit Secrets. Deleting the commit is not enough — anything pushed to
+  GitHub should be treated as compromised even after removal.
+- Set `APP_PASSWORD` before sharing the link. A Community Cloud URL is reachable by anyone
+  who has it.
+- Everyone using the app shares the firm's Azure billing. Monitor spend under **Cost
+  Management + Billing** in the Azure portal and set a budget alert if you want a ceiling.
+  The vision features (reading screenshots and PDF pages) cost noticeably more per call than
+  text, so watch those if usage grows.

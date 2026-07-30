@@ -2,7 +2,7 @@
 
 Used only when the live connectors are unreachable, so the interface stays navigable
 without a network. In normal operation every figure and headline shown in the app comes
-from the live sources: Barron's, WSJ, CNBC, Seeking Alpha and Yahoo Finance.
+from the selected sources: Seeking Alpha, Yahoo Finance, CNBC and SumZero.
 
 All figures below are illustrative, not real quotes.
 """
@@ -49,7 +49,7 @@ HEADLINES = [
         "time": "07:40 ET", "sentiment": "Neutral", "category": "Macro", "link": "",
     },
     {
-        "source": "WSJ",
+        "source": "CNBC",
         "title": "AI capex supercycle shows no sign of slowing as hyperscalers guide higher",
         "summary": "Combined 2026 capex guidance from the four largest cloud providers now tops "
                    "\\$420bn, with most of the increase earmarked for AI infrastructure.",
@@ -70,9 +70,9 @@ HEADLINES = [
         "time": "Today", "sentiment": "Positive", "category": "Semiconductors", "link": "",
     },
     {
-        "source": "Barron's",
+        "source": "Seeking Alpha",
         "title": "The case for staying overweight quality large-caps into year-end",
-        "summary": "Strategists argue earnings breadth is improving beyond the Mag 7, but "
+        "summary": "Contributors argue earnings breadth is improving beyond the Mag 7, but "
                    "valuation dispersion argues for selectivity over index exposure.",
         "time": "Today", "sentiment": "Neutral", "category": "Strategy", "link": "",
     },
@@ -87,8 +87,8 @@ HEADLINES = [
 
 # Shown on the dashboard when no AI provider is connected.
 DEMO_OUTLOOK = (
-    "**Sample synthesis (demo mode).** Across the five monitored sources the tone this week is "
-    "cautiously constructive. Coverage in Barron's and the WSJ emphasises broadening earnings "
+    "**Sample synthesis (demo mode).** Across the selected sources the tone this week is "
+    "cautiously constructive. CNBC coverage emphasises broadening earnings "
     "breadth and a softer dollar, while Seeking Alpha contributors are more divided on whether "
     "the AI infrastructure trade still offers value at current multiples. The clearest "
     "cross-source divergence is the timing of the first Fed cut. Connect Copilot in the sidebar "

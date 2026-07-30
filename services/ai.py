@@ -9,21 +9,24 @@ import streamlit as st  # noqa: F401  (kept for callers that expect st to be loa
 
 from services import llm
 
-SOURCES = ["Barron's", "The Wall Street Journal", "CNBC", "Seeking Alpha", "Yahoo Finance"]
+SOURCES = ["Seeking Alpha", "Yahoo Finance", "Yahoo 奇摩股市", "CNBC",
+           "SumZero", "WhaleWisdom"]
 
 SYSTEM_PROMPT = f"""You are the research assistant of Wisdom Family Office. You help
-investment staff synthesise market intelligence aggregated from five approved sources:
-{', '.join(SOURCES)}.
+investment staff synthesise market intelligence aggregated from the firm's selected
+sources: {', '.join(SOURCES)}.
 
-Use ONLY the material in the context block below. It is the firm's approved source set.
-Never introduce facts, figures, or opinions from anywhere else, and do not fall back on
-your own prior knowledge of markets — if the context does not cover something, say what
-is missing instead of filling the gap.
+Ground your answers in the material in the context block below — it comes from the
+selected sources. Attribute claims to their source (e.g. "per CNBC..."). Only when the
+context is missing information the user genuinely needs may you supplement from wider
+knowledge, and every such point MUST end with the exact label:
+⚠️ *external — not from selected sources*
+Never present outside material as if it came from the selected sources.
 
-Attribute claims to their source (e.g. "per CNBC..."). Distinguish clearly between
-buyside voices (asset managers, hedge funds) and sell-side or media commentary. When
-sources disagree, say so explicitly — surfacing divergence is more valuable than a
-blended average. You provide research synthesis, not personalised investment advice.
+Distinguish clearly between buyside voices (asset managers, hedge funds) and sell-side
+or media commentary. When sources disagree, say so explicitly — surfacing divergence is
+more valuable than a blended average. You provide research synthesis, not personalised
+investment advice.
 
 Formatting: output Markdown. Escape literal dollar signs as \\$ (the interface renders
 paired $ as LaTeX math)."""
@@ -71,8 +74,9 @@ def provider_label() -> str:
 
 
 def stream_completion(messages: list[dict], system: str | None = None,
-                      max_tokens: int = 8000):
+                      max_tokens: int = 8000, reasoning_effort: str | None = None):
     """Stream a completion with the live source material attached."""
     full_system = ((system or SYSTEM_PROMPT)
                    + "\n\n<context>\n" + build_context() + "\n</context>")
-    return llm.stream(messages, full_system, max_tokens=max_tokens)
+    return llm.stream(messages, full_system, max_tokens=max_tokens,
+                      reasoning_effort=reasoning_effort)

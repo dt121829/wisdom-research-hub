@@ -16,14 +16,26 @@ Azure OpenAI configuration (Streamlit secrets, or environment variables):
     AZURE_OPENAI_API_VERSION  optional, defaults below
 """
 
+import base64
 import json
 import os
 import re
 
 import streamlit as st
 
-DEFAULT_API_VERSION = "2024-10-21"
+DEFAULT_API_VERSION = "2025-04-01-preview"
 ANTHROPIC_MODEL = "claude-opus-5"
+
+# Model families disagree on how to cap output and whether temperature is allowed:
+# GPT-5 / o-series want `max_completion_tokens` and only the default temperature,
+# while GPT-4-era deployments want `max_tokens`. Rather than hard-coding a guess
+# from the deployment name (which the user is free to call anything), try the
+# shapes in order and remember the one that worked for each deployment.
+_WORKING_SHAPE: dict[tuple, int] = {}
+
+_PARAM_ERROR_HINTS = ("unsupported", "unrecognized", "not supported", "invalid_request",
+                      "max_tokens", "max_completion_tokens", "temperature",
+                      "reasoning_effort")
 
 
 # --------------------------------------------------------------------- config
@@ -90,25 +102,111 @@ def _anthropic_client():
     return anthropic.Anthropic(api_key=_cfg("ANTHROPIC_API_KEY"))
 
 
+def _azure_create(client, messages, max_tokens, *, stream=False, temperature=0.3,
+                  response_format=None, reasoning_effort=None):
+    """Call the deployment, adapting to whichever parameter shape it accepts.
+
+    `reasoning_effort` ("low"/"medium"/"high") only applies to GPT-5 / o-series
+    deployments; it is dropped automatically if the deployment rejects it.
+    """
+    deployment = _cfg("AZURE_OPENAI_DEPLOYMENT")
+    base = {"model": deployment, "messages": messages, "stream": stream}
+    if response_format:
+        base["response_format"] = response_format
+
+    shapes = [
+        {"max_completion_tokens": max_tokens, "temperature": temperature},
+        {"max_completion_tokens": max_tokens},          # GPT-5 / o-series
+        {"max_tokens": max_tokens, "temperature": temperature},
+        {"max_tokens": max_tokens},                     # oldest deployments
+    ]
+    if reasoning_effort:
+        # Try the reasoning-capable shapes first, then the same shapes without it.
+        shapes = [{"max_completion_tokens": max_tokens,
+                   "reasoning_effort": reasoning_effort}] + shapes
+
+    # Reuse the shape that worked last time for this deployment.
+    key = (deployment, bool(reasoning_effort))
+    order = list(range(len(shapes)))
+    if key in _WORKING_SHAPE:
+        first = _WORKING_SHAPE[key]
+        if first < len(shapes):
+            order = [first] + [i for i in order if i != first]
+
+    last_error = None
+    for index in order:
+        try:
+            result = client.chat.completions.create(**base, **shapes[index])
+            _WORKING_SHAPE[key] = index
+            return result
+        except Exception as exc:
+            last_error = exc
+            message = str(exc).lower()
+            # Only keep trying when the complaint is about the parameters
+            # themselves; a bad key or missing deployment should surface at once.
+            if not any(hint in message for hint in _PARAM_ERROR_HINTS):
+                raise
+    raise last_error
+
+
 # ------------------------------------------------------------------ streaming
 
-def stream(messages: list[dict], system: str, max_tokens: int = 4000):
+def attach_images(message: dict, images: list[bytes], mime: str = "image/png") -> dict:
+    """Return a copy of `message` carrying images alongside its text.
+
+    Produces the multimodal content-part shape both providers understand, so a
+    caller can hand the model a chart or a scanned page to look at.
+    """
+    if not images:
+        return message
+    text = message.get("content") or ""
+    parts = [{"type": "text", "text": text}] if isinstance(text, str) else list(text)
+    for data in images:
+        b64 = base64.b64encode(data).decode("ascii")
+        parts.append({"type": "image_url",
+                      "image_url": {"url": f"data:{mime};base64,{b64}"}})
+    return {**message, "content": parts}
+
+
+def _to_anthropic(message: dict) -> dict:
+    """Translate multimodal content parts into Anthropic's block shape."""
+    content = message.get("content")
+    if isinstance(content, str):
+        return message
+    blocks = []
+    for part in content:
+        if part.get("type") == "text":
+            blocks.append({"type": "text", "text": part["text"]})
+        elif part.get("type") == "image_url":
+            url = part["image_url"]["url"]
+            if url.startswith("data:"):
+                header, _, data = url.partition(",")
+                media = header[5:].split(";")[0] or "image/png"
+                blocks.append({"type": "image",
+                               "source": {"type": "base64", "media_type": media,
+                                          "data": data}})
+    return {**message, "content": blocks}
+
+
+def stream(messages: list[dict], system: str, max_tokens: int = 4000,
+           reasoning_effort: str | None = None):
     """Yield text chunks from the active provider.
 
     `messages` uses the shared shape [{"role": "user"|"assistant", "content": str}].
+    `content` may also be a list of content parts (see `attach_images`) to send
+    pictures as well as text.
+
+    On reasoning deployments `max_tokens` covers reasoning *and* output, so a long
+    prompt with a small budget can return nothing at all — pass a generous budget,
+    and `reasoning_effort="low"` where the task is structured rather than hard.
     """
     provider = active_provider()
 
     if provider == "azure":
         client = _azure_client()
         payload = [{"role": "system", "content": system}] + messages
-        response = client.chat.completions.create(
-            model=_cfg("AZURE_OPENAI_DEPLOYMENT"),
-            messages=payload,
-            max_tokens=max_tokens,
-            temperature=0.3,
-            stream=True,
-        )
+        response = _azure_create(client, payload, max_tokens, stream=True,
+                                 reasoning_effort=reasoning_effort)
         for chunk in response:
             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
@@ -119,7 +217,7 @@ def stream(messages: list[dict], system: str, max_tokens: int = 4000):
             model=ANTHROPIC_MODEL,
             max_tokens=max_tokens,
             system=system,
-            messages=messages,
+            messages=[_to_anthropic(m) for m in messages],
         ) as s:
             for text in s.text_stream:
                 yield text
@@ -128,9 +226,11 @@ def stream(messages: list[dict], system: str, max_tokens: int = 4000):
         raise RuntimeError("No AI provider configured")
 
 
-def complete(prompt: str, system: str, max_tokens: int = 2000) -> str:
+def complete(prompt: str, system: str, max_tokens: int = 2000,
+             reasoning_effort: str | None = None) -> str:
     """Non-streaming completion, returned as one string."""
-    return "".join(stream([{"role": "user", "content": prompt}], system, max_tokens))
+    return "".join(stream([{"role": "user", "content": prompt}], system, max_tokens,
+                          reasoning_effort=reasoning_effort))
 
 
 # ---------------------------------------------------------------- JSON output
@@ -145,7 +245,7 @@ def _extract_json(text: str):
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Last resort: grab the outermost object or array.
+    # Grab the outermost object or array.
     for opener, closer in (("{", "}"), ("[", "]")):
         start, end = text.find(opener), text.rfind(closer)
         if start != -1 and end > start:
@@ -153,34 +253,79 @@ def _extract_json(text: str):
                 return json.loads(text[start:end + 1])
             except json.JSONDecodeError:
                 continue
+    # Last resort — the output was probably truncated mid-array (reasoning models
+    # can exhaust the token budget). Salvage every complete object we can find.
+    salvaged = _salvage_objects(text)
+    if salvaged:
+        return salvaged
     raise ValueError("model did not return usable JSON")
 
 
-def complete_json(prompt: str, system: str, max_tokens: int = 4000):
+def _salvage_objects(text: str) -> list:
+    """Extract every complete {...} object from possibly-truncated JSON text.
+
+    Handles the typical truncation shape '{"views": [{...}, {...}, {"par…' where
+    the outer wrapper never closes: each complete inner object is recovered.
+    """
+    spans = []          # (start, end) of every balanced {...}
+    stack = []          # indices of currently-open braces
+    in_string = escape = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            stack.append(i)
+        elif ch == "}" and stack:
+            spans.append((stack.pop(), i + 1))
+
+    # Keep only outermost complete spans (drop objects nested inside another).
+    spans.sort()
+    objects, last_end = [], -1
+    for start, end in spans:
+        if start >= last_end:
+            try:
+                obj = json.loads(text[start:end])
+                if isinstance(obj, dict):
+                    objects.append(obj)
+                    last_end = end
+            except json.JSONDecodeError:
+                pass
+
+    # A single wrapper like {"views": [...]} unwraps to the inner list.
+    if len(objects) == 1 and len(objects[0]) == 1:
+        inner = next(iter(objects[0].values()))
+        if isinstance(inner, list):
+            return inner
+    return objects
+
+
+def complete_json(prompt: str, system: str, max_tokens: int = 4000,
+                  reasoning_effort: str | None = None):
     """Completion parsed as JSON. Uses native JSON mode on Azure where available."""
     provider = active_provider()
     system = system + "\n\nRespond with valid JSON only — no prose, no code fences."
 
     if provider == "azure":
         client = _azure_client()
+        payload = [{"role": "system", "content": system},
+                   {"role": "user", "content": prompt}]
         try:
-            response = client.chat.completions.create(
-                model=_cfg("AZURE_OPENAI_DEPLOYMENT"),
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
-                temperature=0.1,
-                response_format={"type": "json_object"},
-            )
+            response = _azure_create(client, payload, max_tokens, temperature=0.1,
+                                     response_format={"type": "json_object"},
+                                     reasoning_effort=reasoning_effort)
         except Exception:
-            # Older deployments reject response_format; retry without it.
-            response = client.chat.completions.create(
-                model=_cfg("AZURE_OPENAI_DEPLOYMENT"),
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
-                temperature=0.1,
-            )
+            # Some deployments reject response_format; retry without it and lean
+            # on _extract_json to cope with any wrapping prose.
+            response = _azure_create(client, payload, max_tokens, temperature=0.1,
+                                     reasoning_effort=reasoning_effort)
         return _extract_json(response.choices[0].message.content or "")
 
     return _extract_json(complete(prompt, system, max_tokens))

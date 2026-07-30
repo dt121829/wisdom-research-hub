@@ -1,6 +1,6 @@
 import streamlit as st
 
-from services import report_store
+from services import pdf, report_store
 
 
 def render():
@@ -53,14 +53,36 @@ def render():
 
             st.markdown(full["body"])
 
-            b1, b2 = st.columns([1, 4])
-            b1.download_button(
-                "⬇ Download",
-                data=full["body"],
-                file_name=f"{r['topic'][:40].replace(' ', '_')}_{r['id']}.md",
-                mime="text/markdown",
-                key=f"dl_{r['id']}",
-            )
-            if b2.button("🗑 Delete", key=f"del_{r['id']}"):
+            stem = f"{r['topic'][:40].replace(' ', '_')}_{r['id']}"
+            spec = (f"{r['report_type']} · {r['audience']} · {r['length']} · "
+                    f"{r['style']} · {r['language']} · {r['purpose']}")
+            b1, b2, b3 = st.columns([1, 1, 3])
+            try:
+                b1.download_button(
+                    "⬇ .pdf",
+                    data=pdf.markdown_to_pdf(full["body"], subtitle=spec),
+                    file_name=f"{stem}.pdf",
+                    mime="application/pdf",
+                    key=f"dlpdf_{r['id']}",
+                )
+                b2.download_button(
+                    "⬇ .docx",
+                    data=pdf.markdown_to_docx(full["body"], subtitle=spec),
+                    file_name=f"{stem}.docx",
+                    mime=("application/vnd.openxmlformats-officedocument"
+                          ".wordprocessingml.document"),
+                    key=f"dldocx_{r['id']}",
+                )
+            except Exception as exc:
+                b1.download_button(
+                    "⬇ .md",
+                    data=full["body"],
+                    file_name=f"{stem}.md",
+                    mime="text/markdown",
+                    key=f"dlmd_{r['id']}",
+                )
+                b2.caption(f"PDF/Word unavailable: {exc}")
+
+            if b3.button("🗑 Delete", key=f"del_{r['id']}"):
                 report_store.delete_report(r["id"])
                 st.rerun()

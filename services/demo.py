@@ -17,14 +17,14 @@ _CANNED = {
     ),
     "fed": (
         "**Fed path (sample data):** coverage on Yahoo Finance reports economists moving their "
-        "first-cut call from September to December, citing core inflation sticky at 2.8%. WSJ "
+        "first-cut call from September to December, citing core inflation sticky at 2.8%. CNBC "
         "notes the dollar softening as markets price higher odds of a Q4 pivot. The gap between "
         "media consensus and what fund managers say on the record is exactly what the Buyside "
         "Views page is built to surface."
     ),
     "buyside": (
         "**Buyside positioning (demo mode).** In live mode the Buyside Views page reads the "
-        "current articles from all five sources, extracts every view attributed to a named "
+        "current articles from the selected sources, extracts every view attributed to a named"
         "asset manager or hedge fund, and cross-checks whether that same party is quoted "
         "elsewhere — flagging cases where their stance differs between outlets. Connect "
         "Copilot in the sidebar to run it against today's coverage."
