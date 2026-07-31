@@ -64,10 +64,11 @@ def render():
     )
     st.caption(
         "🏦 **Buyside** here means asset management firms, hedge funds, and contributors "
-        "on the firm's research platforms (Seeking Alpha, SumZero, WhaleWisdom). "
-        "Bank and broker analysts, retail trading platforms such as eToro, and media "
-        "commentators such as network hosts are captured too, but are labelled as "
-        "🏛 non-buyside and filtered out by the **Buyside only** toggle."
+        "on the firm's research platforms (Seeking Alpha, SumZero, WhaleWisdom) — and the "
+        "comparison below is built from those voices only. Bank and broker analysts, "
+        "retail trading platforms such as eToro, and media commentators such as network "
+        "hosts are captured for context but shown separately under 🏛 *Other market "
+        "voices*, never in the buyside comparison."
     )
 
     if not llm.live():
@@ -136,44 +137,54 @@ def render():
                     "coverage may be purely factual — try 'Deep' or hit ↻ Re-read.")
         return
 
+    scope = result.get("comparison_scope", "buyside")
+    other = result.get("other", [])
     st.caption(f"Read {result['scanned']} articles, then followed up on "
-               f"{result['followed']} more · found {len(quotes)} attributed comments")
+               f"{result['followed']} more · {result.get('buyside_count', 0)} buyside "
+               f"voice(s), {result.get('other_count', 0)} other market voice(s)")
 
     # ------------------------------------------------------- the comparison
     if result["comparison"]:
-        st.subheader("How the views compare")
+        if scope == "buyside":
+            st.subheader("How buyside views compare")
+        else:
+            st.subheader("How the views compare")
+            st.info(f"Only {result.get('buyside_count', 0)} buyside voice(s) surfaced in "
+                    "today's coverage — too few to compare on their own, so this compares "
+                    "all attributed market voices. Try **Deep**, or search a specific "
+                    "topic, to surface more buyside commentary.")
         st.markdown(result["comparison"])
         st.caption("Numbers in brackets link to the article each quote came from. "
                    "Market data: Yahoo Finance.")
         st.divider()
 
     # ------------------------------------------------------------ the quotes
-    st.subheader("What each investor said")
-
-    f1, f2 = st.columns(2)
-    only_buyside = f1.toggle(
-        "Buyside only", value=False,
-        help="Asset managers, hedge funds and research-platform contributors "
-             "(Seeking Alpha, SumZero, WhaleWisdom) only — excluding banks and "
-             "brokers, media commentators, executives and policymakers.")
-    stance = f2.selectbox("Stance", ["All", "Bullish", "Bearish", "Neutral"])
-
+    # `quotes` is the compared set: buyside-only in the normal case. The stance
+    # filter narrows within it; non-buyside voices live in their own section below.
+    st.subheader("What buyside investors said" if scope == "buyside"
+                 else "What each investor said")
+    stance = st.selectbox("Stance", ["All", "Bullish", "Bearish", "Neutral"])
     shown = [(n, q) for n, q in enumerate(quotes, 1)
-             if (not only_buyside or q["is_buyside"])
-             and (stance == "All" or q["stance"] == stance)]
-
-    buyside_n = sum(1 for q in quotes if q["is_buyside"])
-    st.write(f"**{len(shown)}** of {len(quotes)} comments · {buyside_n} from buyside "
-             "institutions")
-
+             if stance == "All" or q["stance"] == stance]
+    st.write(f"**{len(shown)}** of {len(quotes)} shown")
     for n, q in shown:
         _render_quote(n, q)
+
+    # ------------------------------- non-buyside context (kept out of the headline)
+    if scope == "buyside" and other:
+        st.divider()
+        with st.expander(f"🏛 Other market voices — NOT buyside ({len(other)}): banks, "
+                         "brokers, media, executives, policymakers", expanded=False):
+            st.caption("Shown for context only. By the firm's definition these are not "
+                       "buyside, so they are excluded from the comparison above.")
+            for n, q in enumerate(other, len(quotes) + 1):
+                _render_quote(n, q)
 
     # ----------------------------------------------------- cited sources
     st.divider()
     st.subheader("Cited sources")
     seen = set()
-    for n, q in enumerate(quotes, 1):
+    for q in quotes + other:
         key = (q["source"], q["headline"])
         if key in seen:
             continue

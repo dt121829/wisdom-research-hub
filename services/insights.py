@@ -470,19 +470,34 @@ def buyside_pipeline(cache_key: str, _articles: list, _market_note: str,
             keys.add(key)
             unique.append(q)
 
-    # Buyside voices first — that is what the page is for.
-    unique.sort(key=lambda q: (not q["is_buyside"], q["person"]))
+    # Split by the firm's definition of buyside. The page's flagship comparison
+    # is built from buyside voices ONLY — that is what "Buyside Views" promises.
+    # Non-buyside voices (banks, brokers, media, executives, policymakers) are
+    # kept but handed back separately, as context rather than as the headline.
+    buyside = sorted((q for q in unique if q["is_buyside"]),
+                     key=lambda q: q["person"])
+    other = sorted((q for q in unique if not q["is_buyside"]),
+                   key=lambda q: (q["party_type"], q["person"]))
 
-    comparison = compare_views(unique, _market_note, topic) if unique else ""
+    # Compare buyside on its own when there are at least two of them; otherwise
+    # there is nothing to compare, so fall back to the wider set and flag it.
+    if len(buyside) >= 2:
+        compared, scope = buyside, "buyside"
+    else:
+        compared, scope = unique, "all"
+
+    comparison = compare_views(compared, _market_note, topic) if compared else ""
     if comparison:
         # Turn the [3] quote markers into links to the article each came from.
         def _num_link(match):
             idx = int(match.group(1))
-            if 1 <= idx <= len(unique) and unique[idx - 1]["link"]:
-                return f"[[{idx}]]({unique[idx - 1]['link']})"
+            if 1 <= idx <= len(compared) and compared[idx - 1]["link"]:
+                return f"[[{idx}]]({compared[idx - 1]['link']})"
             return match.group(0)
 
         comparison = re.sub(r"\[(\d{1,2})\]", _num_link, comparison)
 
-    return {"quotes": unique, "comparison": comparison,
+    return {"quotes": compared, "buyside": buyside, "other": other,
+            "comparison": comparison, "comparison_scope": scope,
+            "buyside_count": len(buyside), "other_count": len(other),
             "scanned": len(first), "followed": len(follow)}

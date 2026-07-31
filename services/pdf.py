@@ -5,14 +5,18 @@ institutional-research layout: cover header band, document metadata line,
 justified body, styled tables, and numbered pages. Price / sector charts are
 rendered with matplotlib and embedded as images.
 
-Traditional Chinese output uses a CJK font from C:\\Windows\\Fonts when one is
-available (kaiu.ttf ships with every Windows install).
+Traditional Chinese output needs a CJK font whose glyphs use TrueType outlines,
+because reportlab (the PDF engine) cannot embed PostScript/CFF outlines — which is
+what Noto CJK uses. The candidate list below is ordered accordingly, each font is
+probed for embeddability, and if embedding still fails at render time the report
+falls back to the base font rather than failing outright.
 """
 
 import base64
 import io
 import re
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 _FONT_DIR = Path(__file__).resolve().parent.parent / "data" / "fonts"
@@ -28,22 +32,48 @@ def _bundled_fonts() -> list[Path]:
     return sorted(_FONT_DIR.glob("*.ttf")) + sorted(_FONT_DIR.glob("*.otf"))
 
 
+# Ordered best-first. reportlab can only embed TrueType-outline fonts, so the
+# TrueType CJK fonts (WenQuanYi, AR PL, Windows kaiu) come before the Noto CJK
+# ttc, whose PostScript/CFF outlines reportlab rejects. Each candidate is still
+# validated below, so an un-embeddable one is skipped rather than crashing.
 _CJK_FONT_CANDIDATES = [
     *_bundled_fonts(),
-    # Debian/Ubuntu (Streamlit Community Cloud) via fonts-noto-cjk.
-    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-    Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
-    Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
-    # Local Windows development.
+    # Debian/Ubuntu (Streamlit Community Cloud) — TrueType outlines, embeddable.
+    Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
+    Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+    Path("/usr/share/fonts/truetype/arphic/uming.ttc"),
+    Path("/usr/share/fonts/truetype/arphic/ukai.ttc"),
+    # Local Windows development — also TrueType.
     Path(r"C:\Windows\Fonts\kaiu.ttf"),      # DFKai-SB — Traditional Chinese
     Path(r"C:\Windows\Fonts\msjh.ttf"),
     Path(r"C:\Windows\Fonts\mingliu.ttf"),
+    # Last resort: Noto CJK. Usually rejected by reportlab (CFF outlines) and so
+    # skipped by the validation, but kept in case a TrueType build is present.
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
 ]
 
 
+def _reportlab_can_embed(path: Path) -> bool:
+    """True only if reportlab can actually embed this font into a PDF.
+
+    reportlab supports TrueType (glyf) outlines but not PostScript/CFF, and the
+    only reliable test is to try loading it — a bare exists() check let the
+    un-embeddable Noto CJK ttc through and crashed the whole render.
+    """
+    try:
+        from reportlab.pdfbase.ttfonts import TTFont
+
+        TTFont("probe", str(path))
+        return True
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=1)
 def _cjk_font_path() -> str | None:
     for p in _CJK_FONT_CANDIDATES:
-        if p.exists():
+        if p.exists() and _reportlab_can_embed(p):
             # Forward slashes: backslash paths get misread as URLs by the CSS parser.
             return str(p).replace("\\", "/")
     return None
@@ -284,17 +314,11 @@ def markdown_to_pdf(md_text: str, *, subtitle: str = "", charts_html: str = "",
 
     cjk = _cjk_font_path()
     has_cjk_text = bool(re.search(r"[\u4e00-\u9fff]", md_text))
-    if cjk and has_cjk_text:
-        font_face = f"@font-face {{ font-family: CJK; src: url('{cjk}'); }}"
-        body_font = "CJK"
-    else:
-        font_face = ""
-        body_font = "Helvetica"
-
-    css = _CSS.format(font_face=font_face, body_font=body_font)
     generated = datetime.now().strftime("%B %d, %Y · %H:%M")
 
-    html = f"""<html><head><style>{css}</style></head><body>
+    def _render(font_face: str, body_font: str) -> bytes:
+        css = _CSS.format(font_face=font_face, body_font=body_font)
+        html = f"""<html><head><style>{css}</style></head><body>
 <div class="band">
   <span class="firm">{firm}</span><br/>
   <span class="dept">Investment Research · AI-Synthesised Report</span>
@@ -309,12 +333,23 @@ decision. Figures are as of the generation time above.</p>
 <div id="footer_content">{firm} · Confidential — internal use only · Page <pdf:pagenumber/>
  of <pdf:pagecount/></div>
 </body></html>"""
+        out = io.BytesIO()
+        result = pisa.CreatePDF(io.StringIO(html), dest=out, encoding="utf-8")
+        if result.err:
+            raise RuntimeError("PDF rendering failed")
+        return out.getvalue()
 
-    out = io.BytesIO()
-    result = pisa.CreatePDF(io.StringIO(html), dest=out, encoding="utf-8")
-    if result.err:
-        raise RuntimeError("PDF rendering failed")
-    return out.getvalue()
+    # Try the CJK font first. The up-front probe cannot fully guarantee that
+    # xhtml2pdf will embed a .ttc collection at render time, so if that fails we
+    # fall back to the base font — a document with Chinese shown as boxes still
+    # beats no document at all.
+    if cjk and has_cjk_text:
+        try:
+            return _render(f"@font-face {{ font-family: CJK; src: url('{cjk}'); }}",
+                           "CJK")
+        except Exception:
+            pass
+    return _render("", "Helvetica")
 
 
 def page_images(pdf_bytes: bytes, scale: float = 2.0) -> list[bytes]:
