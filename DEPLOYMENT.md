@@ -39,8 +39,14 @@ root, all of which are already here:
 | File | What it does |
 |---|---|
 | `requirements.txt` | Python packages to install |
-| `packages.txt` | System packages — installs `fonts-noto-cjk` so Traditional Chinese PDFs render |
+| `packages.txt` | System (apt) packages — installs CJK fonts so Traditional Chinese PDFs render |
 | `.streamlit/config.toml` | Theme and server settings |
+
+> ⚠️ **`packages.txt` must contain only bare package names, one per line — no
+> comments, no blank lines.** Streamlit Cloud passes every line to `apt-get
+> install`, so a `# comment` line makes apt fail with "Unable to locate package"
+> and the whole build errors out ("Error running app"). Keep explanations in code
+> or docs, never in `packages.txt`.
 
 **3 · Stage everything, including the newer modules.**
 

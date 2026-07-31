@@ -1,7 +1,3 @@
-# Noto CJK renders Traditional Chinese in the browser UI, but its glyphs use
-# PostScript/CFF outlines that reportlab (the PDF engine) cannot embed. The
-# WenQuanYi and AR PL fonts below use TrueType outlines, which reportlab CAN
-# embed, so Chinese report PDFs render instead of erroring.
 fonts-noto-cjk
 fonts-wqy-zenhei
 fonts-arphic-uming
